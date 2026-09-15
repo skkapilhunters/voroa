@@ -14,7 +14,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Add a new clan to track
+// Health check endpoint for host deployment
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// Track Clan Endpoint
 app.post('/api/clans/track', async (req, res) => {
   try {
     const { tag } = req.body;
@@ -30,22 +33,24 @@ app.post('/api/clans/track', async (req, res) => {
       [clan.tag, clan.name, clan.clanLevel, clan.members, clan.clanPoints]
     );
 
-    // Initial sync for this clan
     syncAllTrackedClans();
-
     res.json({ success: true, message: `Now tracking ${clan.name} (${clan.tag})` });
   } catch (err) {
     res.status(500).json({ error: err.response?.data?.message || err.message });
   }
 });
 
-// Get tracked clans list
+// Fetch Tracked Clans
 app.get('/api/clans', async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM clans ORDER BY name ASC');
-  res.json(rows);
+  try {
+    const { rows } = await pool.query('SELECT * FROM clans ORDER BY name ASC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Database connection error: ' + err.message });
+  }
 });
 
-// Get full dashboard data for a tracked clan
+// Fetch Dashboard Data
 app.get('/api/dashboard/:tag', async (req, res) => {
   const tag = req.params.tag.startsWith('#') ? req.params.tag : `#${req.params.tag}`;
 
@@ -53,9 +58,7 @@ app.get('/api/dashboard/:tag', async (req, res) => {
     const clanRes = await pool.query('SELECT * FROM clans WHERE tag = $1', [tag]);
     const liveWarRes = await pool.query('SELECT * FROM live_wars WHERE clan_tag = $1', [tag]);
     const warLogRes = await pool.query('SELECT * FROM war_logs WHERE clan_tag = $1 ORDER BY end_time DESC LIMIT 10', [tag]);
-    const cwlRes = await pool.query('SELECT * FROM cwl_groups WHERE clan_tag = $1', [tag]);
 
-    // Live CoC API fallback if DB doesn't have details yet
     let liveClanData = null;
     try {
       const apiRes = await fetchClan(tag);
@@ -66,29 +69,26 @@ app.get('/api/dashboard/:tag', async (req, res) => {
       clan: clanRes.rows[0] || liveClanData,
       liveMembers: liveClanData?.memberList || [],
       liveWar: liveWarRes.rows[0] ? liveWarRes.rows[0].war_data : null,
-      warLog: warLogRes.rows,
-      cwl: cwlRes.rows[0] ? cwlRes.rows[0].group_data : null
+      warLog: warLogRes.rows
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Search Player directly from CoC API
-app.get('/api/player/:tag', async (req, res) => {
+// Start Server First
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+
+  // Safely attempt DB initialization
   try {
-    const tag = req.params.tag.startsWith('#') ? req.params.tag : `#${req.params.tag}`;
-    const { data: player } = await fetchPlayer(tag);
-    res.json(player);
+    if (!process.env.DATABASE_URL) {
+      console.error('❌ WARNING: DATABASE_URL environment variable is missing!');
+      return;
+    }
+    await initDB();
+    startPoller();
   } catch (err) {
-    res.status(500).json({ error: err.response?.data?.message || err.message });
+    console.error('❌ Database Initialization Failed:', err.message);
   }
 });
-
-async function start() {
-  await initDB();
-  startPoller();
-  app.listen(PORT, () => console.log(`🚀 CoC Hybrid Platform running on port ${PORT}`));
-}
-
-start();

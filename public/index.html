@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoC Hybrid Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <nav class="bg-slate-800 border-b border-slate-700 p-4">
+    <div class="max-w-6xl mx-auto flex justify-between items-center">
+      <h1 class="text-xl font-bold text-amber-400">⚔️ CoC Hybrid Tracker</h1>
+      <div class="flex gap-2">
+        <input id="trackTagInput" type="text" placeholder="#CLAN_TAG" class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded text-sm uppercase">
+        <button onclick="trackClan()" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold px-4 py-1.5 rounded text-sm">Track Clan</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto p-4 md:p-6">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+      
+      <!-- Sidebar: Tracked Clans -->
+      <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+        <h2 class="text-lg font-semibold mb-3 text-slate-300">Tracked Clans</h2>
+        <div id="clanList" class="space-y-2">Loading clans...</div>
+      </div>
+
+      <!-- Main Dashboard Display -->
+      <div class="md:col-span-3 space-y-6">
+        
+        <!-- Live War Box -->
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+          <h2 class="text-lg font-bold text-amber-400 mb-2">🔥 Current War Status</h2>
+          <div id="warContent" class="text-slate-400">Select a clan to view live war status.</div>
+        </div>
+
+        <!-- Clan Members List -->
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+          <h2 class="text-lg font-bold text-slate-200 mb-3">👥 Clan Roster</h2>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-300">
+              <thead class="bg-slate-900/50 text-slate-400">
+                <tr>
+                  <th class="p-2">Name</th>
+                  <th class="p-2">Role</th>
+                  <th class="p-2">TH Level</th>
+                  <th class="p-2">Trophies</th>
+                </tr>
+              </thead>
+              <tbody id="memberList">
+                <tr><td colspan="4" class="p-3 text-slate-500">No clan selected.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Past War Logs -->
+        <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+          <h2 class="text-lg font-bold text-slate-200 mb-3">📜 War Logs (PostgreSQL)</h2>
+          <div id="warLogList" class="space-y-2 text-sm text-slate-400">No war history available.</div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let activeTag = '';
+
+    async function loadClans() {
+      const res = await fetch('/api/clans');
+      const clans = await res.json();
+      const list = document.getElementById('clanList');
+      if (clans.length === 0) {
+        list.innerHTML = '<p class="text-slate-500 text-sm">No clans tracked yet. Add one above!</p>';
+        return;
+      }
+      list.innerHTML = clans.map(c => `
+        <button onclick="loadDashboard('${c.tag}')" class="w-full text-left p-2.5 rounded bg-slate-900/60 hover:bg-slate-700 border border-slate-700/50 block">
+          <div class="font-bold text-amber-300">${c.name}</div>
+          <div class="text-xs text-slate-400">${c.tag} • Level ${c.level}</div>
+        </button>
+      `).join('');
+
+      if(!activeTag && clans.length > 0) loadDashboard(clans[0].tag);
+    }
+
+    async function trackClan() {
+      const input = document.getElementById('trackTagInput');
+      const tag = input.value.trim();
+      if (!tag) return alert('Enter a valid clan tag');
+
+      const res = await fetch('/api/clans/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        input.value = '';
+        loadClans();
+      } else {
+        alert(data.error || 'Failed to track clan');
+      }
+    }
+
+    async function loadDashboard(tag) {
+      activeTag = tag;
+      const res = await fetch(`/api/dashboard/${encodeURIComponent(tag)}`);
+      const data = await res.json();
+
+      // Render War
+      const warDiv = document.getElementById('warContent');
+      if (data.liveWar && data.liveWar.state !== 'notInWar') {
+        const w = data.liveWar;
+        warDiv.innerHTML = `
+          <div class="flex justify-between items-center bg-slate-900/80 p-4 rounded border border-slate-700">
+            <div>
+              <div class="font-bold text-lg">${w.clan.name} (${w.clan.stars} ⭐)</div>
+              <div class="text-xs text-slate-400">Destruction: ${w.clan.destructionPercentage}%</div>
+            </div>
+            <div class="font-bold text-amber-400 uppercase text-sm">${w.state}</div>
+            <div class="text-right">
+              <div class="font-bold text-lg">${w.opponent.name} (${w.opponent.stars} ⭐)</div>
+              <div class="text-xs text-slate-400">Destruction: ${w.opponent.destructionPercentage}%</div>
+            </div>
+          </div>
+        `;
+      } else {
+        warDiv.innerHTML = `<span class="text-slate-400">Clan is currently not in war.</span>`;
+      }
+
+      // Render Members
+      const memberTbody = document.getElementById('memberList');
+      if (data.liveMembers && data.liveMembers.length > 0) {
+        memberTbody.innerHTML = data.liveMembers.map(m => `
+          <tr class="border-b border-slate-700/50">
+            <td class="p-2 font-medium text-slate-200">${m.name} <span class="text-xs text-slate-500">${m.tag}</span></td>
+            <td class="p-2 capitalize">${m.role}</td>
+            <td class="p-2">TH ${m.townHallLevel}</td>
+            <td class="p-2 text-amber-300">🏆 ${m.trophies}</td>
+          </tr>
+        `).join('');
+      } else {
+        memberTbody.innerHTML = `<tr><td colspan="4" class="p-3 text-slate-500">No member list cached.</td></tr>`;
+      }
+
+      // Render War Logs
+      const warLogDiv = document.getElementById('warLogList');
+      if (data.warLog && data.warLog.length > 0) {
+        warLogDiv.innerHTML = data.warLog.map(wl => `
+          <div class="p-2.5 rounded bg-slate-900/50 flex justify-between items-center border border-slate-700/40">
+            <div>vs <span class="font-bold text-slate-200">${wl.opponent_name}</span> (${wl.team_size}v${wl.team_size})</div>
+            <div class="font-semibold ${wl.result === 'win' ? 'text-green-400' : 'text-red-400'} capitalize">${wl.result}: ${wl.stars} - ${wl.opponent_stars}</div>
+          </div>
+        `).join('');
+      } else {
+        warLogDiv.innerHTML = `<div class="text-slate-500">No past wars recorded in database yet.</div>`;
+      }
+    }
+
+    loadClans();
+  </script>
+</body>
+</html>
